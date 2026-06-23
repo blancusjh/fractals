@@ -4,6 +4,10 @@ Interactive implementations of the Mandelbrot set, intended for comparing three
 rendering approaches: vectorised NumPy, parallel Numba, and an interactive GLSL
 viewer powered by VisPy Gloo.
 
+<img width="1824" height="1880" alt="image" src="https://github.com/user-attachments/assets/cd2cd3db-bbfb-4d29-a432-e159f65bb9c5" />
+
+
+
 ## Quick start
 
 Create an environment and install the dependencies:
