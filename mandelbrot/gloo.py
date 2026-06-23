@@ -1,3 +1,5 @@
+"""Interactive GPU Mandelbrot viewer built with VisPy Gloo."""
+
 import numpy as np
 from vispy import app, gloo
 

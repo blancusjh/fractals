@@ -1,0 +1,8 @@
+# Core numerical array support
+numpy
+
+# Interactive visualisation backend
+vispy
+
+# CPU-accelerated example
+numba
