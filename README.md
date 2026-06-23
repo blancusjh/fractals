@@ -62,8 +62,7 @@ Numba's just-in-time compilation cost.
 └── README.md
 ```
 
-## Development
+## Limitations
 
-Run the relevant viewer manually after changes. The project currently has no
-automated test suite; numerical and interaction tests will be added alongside
-future renderer refactors.
+The most strong limitation is that arbitrary precision arithmetic implementation was not implemented,
+so the fractal is limited by the float representation used, for infinite zoom it is required solve this gap.
