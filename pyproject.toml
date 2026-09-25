@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fractals"
+version = "0.2.0"
+description = "Escape-time fractals at any zoom depth: arbitrary-precision reference orbits, float64 perturbation."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["numpy", "numba"]
+
+[project.optional-dependencies]
+viewer = ["vispy"]
+gif = ["pillow"]
+dev = ["pytest", "pillow", "vispy"]
+
+[project.scripts]
+fractals = "fractals.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

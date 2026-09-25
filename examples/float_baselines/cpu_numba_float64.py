@@ -1,3 +1,9 @@
+"""Baseline: parallel Numba Mandelbrot in float64, redrawn after each pan/zoom.
+
+Kept for comparison with the `fractals` package: plain float64 runs out of
+precision at a magnification of ~1e14, where pixels merge into blocks.
+"""
+
 import numpy as np
 from vispy import app, scene
 from numba import njit, prange

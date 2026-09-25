@@ -1,8 +1,9 @@
-# Core numerical array support
+# Core: arrays and the JIT-compiled perturbation kernel
 numpy
+numba
 
-# Interactive visualisation backend
+# Interactive viewer (python -m fractals view) and the float baselines
 vispy
 
-# CPU-accelerated example
-numba
+# PNG/GIF output (render, zoom, examples)
+pillow

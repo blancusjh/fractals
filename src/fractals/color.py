@@ -1,0 +1,59 @@
+"""Colouring: smooth iteration counts to RGB."""
+
+from __future__ import annotations
+
+import numpy as np
+
+#: Cyclic palettes as control points (the last point wraps to the first).
+PALETTES: dict[str, np.ndarray] = {
+    # The classic "Ultra Fractal" gradient: deep blue, white, amber, black.
+    "classic": np.array([
+        (0, 7, 100), (32, 107, 203), (237, 255, 255), (255, 170, 0), (0, 2, 0),
+    ], dtype=float),
+    "fire": np.array([
+        (10, 2, 20), (120, 20, 40), (230, 90, 20), (255, 210, 90),
+        (255, 250, 230), (70, 130, 200), (20, 30, 80),
+    ], dtype=float),
+    "ocean": np.array([
+        (2, 10, 30), (10, 70, 120), (60, 170, 190), (230, 250, 240),
+        (240, 180, 90), (110, 40, 60),
+    ], dtype=float),
+    "gray": np.array([(10, 10, 10), (245, 245, 245)], dtype=float),
+}
+
+
+def palette_lookup(t: np.ndarray, palette: str | np.ndarray) -> np.ndarray:
+    """Sample a cyclic palette at positions ``t`` (period 1). Returns floats."""
+    stops = PALETTES[palette] if isinstance(palette, str) else np.asarray(palette, float)
+    k = len(stops)
+    u = np.mod(t, 1.0) * k
+    i0 = np.floor(u).astype(int) % k
+    i1 = (i0 + 1) % k
+    w = (u - np.floor(u))[..., None]
+    w = w * w * (3 - 2 * w)          # smoothstep between stops
+    return stops[i0] * (1 - w) + stops[i1] * w
+
+
+def colorize(
+    mu: np.ndarray,
+    palette: str | np.ndarray = "fire",
+    period: float | None = None,
+    offset: float = 0.0,
+    interior=(0, 0, 0),
+) -> np.ndarray:
+    """RGB ``uint8`` image from smooth iteration counts (``-1`` = inside).
+
+    With ``period=None`` the palette is stretched over ``log(μ)`` — good for a
+    single image whatever its iteration range. With a number, one palette
+    cycle spans ``period`` iterations — stable from frame to frame, which is
+    what a zoom animation wants.
+    """
+    escaped = mu >= 0
+    m = np.where(escaped, mu, 0.0)
+    if period is None:
+        t = 1.4 * np.log1p(np.maximum(m, 0.0)) + offset
+    else:
+        t = m / period + offset
+    rgb = palette_lookup(t, palette)
+    rgb[~escaped] = interior
+    return np.clip(rgb, 0, 255).astype(np.uint8)
