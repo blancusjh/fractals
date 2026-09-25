@@ -51,14 +51,20 @@ def escape_square(centre, radius, size, max_iter, device):
     return fr.escape_time("mandelbrot", view, n, device=device).astype(np.float32), n
 
 
-def colour(mu, angle, size, base):
-    """Colour escape counts, then rotate the image and crop the centre."""
+def colour(mu, angle, size, base, levels=12):
+    """Colour escape counts in flat bands, then rotate the image and crop.
+
+    The palette position follows the (log) escape count above the frame's
+    base, stepped into ``levels`` flat bands per palette cycle — contour
+    bands rather than a smooth gradient, at any depth.
+    """
     escaped = mu >= 0
     t = 0.42 * np.log1p(np.maximum(np.where(escaped, mu, 0) - base, 0.0))
+    t = np.floor(t * levels) / levels
     rgb = fr.color.palette_lookup(t, "fire")
     rgb[~escaped] = 0
     img = Image.fromarray(np.clip(rgb, 0, 255).astype(np.uint8))
-    img = img.rotate(math.degrees(angle), resample=Image.BICUBIC)
+    img = img.rotate(math.degrees(angle), resample=Image.NEAREST)
     off = (img.width - size) // 2
     return np.asarray(img.crop((off, off, off + size, off + size)))
 

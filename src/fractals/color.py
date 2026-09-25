@@ -46,6 +46,7 @@ def colorize(
     period: float | None = None,
     offset: float = 0.0,
     interior=(0, 0, 0),
+    banded: bool = True,
 ) -> np.ndarray:
     """RGB ``uint8`` image from smooth iteration counts (``-1`` = inside).
 
@@ -55,9 +56,15 @@ def colorize(
     band, so plain ``log(μ)`` would be one flat colour). With a number, one palette
     cycle spans ``period`` iterations — stable from frame to frame, which is
     what a zoom animation wants.
+
+    ``banded=True`` (the default) colours by the whole number of iterations,
+    so each escape band is one flat colour — the classic escape-time look.
+    ``banded=False`` uses the continuous count for smooth gradients.
     """
     escaped = mu >= 0
     m = np.where(escaped, mu, 0.0)
+    if banded:
+        m = np.floor(m)
     if period is None:
         base = m[escaped].min() if escaped.any() else 0.0
         t = 1.4 * np.log1p(np.maximum(m - base, 0.0)) + offset
