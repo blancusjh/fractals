@@ -46,6 +46,7 @@ def main(argv=None):
     common.add_argument("--width", type=int, default=800)
     common.add_argument("--height", type=int, default=800)
     common.add_argument("--palette", default="fire", choices=sorted(PALETTES))
+    common.add_argument("--gpu", action="store_true", help="render with the GLSL kernel")
 
     sub.add_parser("view", parents=[common], help="interactive window (needs vispy)")
 
@@ -68,7 +69,8 @@ def main(argv=None):
 
     if args.cmd == "view":
         from .viewer import run
-        run(fractal, args.re, args.im, args.radius, (args.width, args.height), args.palette)
+        run(fractal, args.re, args.im, args.radius, (args.width, args.height), args.palette,
+            gpu=args.gpu)
         return 0
 
     if args.cmd == "render":
@@ -76,7 +78,8 @@ def main(argv=None):
         view = _view(args, fractal)
         n = args.iterations or auto_iterations(view)
         t = time.time()
-        img = render(fractal, view, n, args.palette, supersample=args.supersample)
+        img = render(fractal, view, n, args.palette, supersample=args.supersample,
+                     device="gpu" if args.gpu else "cpu")
         Image.fromarray(img).save(args.out)
         print(f"{args.out}: {view.width}×{view.height}, {n} iterations, "
               f"{view.bits} bits, {time.time() - t:.1f} s")
@@ -97,7 +100,8 @@ def main(argv=None):
     def progress(k, view, mu):
         print(f"\rframe {k + 1}/{args.frames}  zoom {view.magnification}", end="", flush=True)
 
-    save_gif(zoom_frames(path, palette=args.palette, progress=progress), args.out,
+    save_gif(zoom_frames(path, palette=args.palette, progress=progress,
+                         device="gpu" if args.gpu else "cpu"), args.out,
              fps=args.fps, colors=args.colors)
     print(f"\n{args.out}")
     return 0

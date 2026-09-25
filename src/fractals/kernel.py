@@ -84,13 +84,14 @@ def _step(kind, zx, zy, dx, dy, cx, cy, f):
     return lin_x + sq_x + cx, lin_y + sq_y + cy
 
 
-@njit(cache=True, parallel=True, fastmath=False)
+@njit(cache=True, parallel=True, fastmath=False, nogil=True)
 def perturbation_kernel(
     ref_x, ref_y,            # reference orbit Z₀..Z_N (float64)
     kind, dynamical_plane,   # map, and whether the pixel is z₀ (Julia) or c
     spacing_m, spacing_e,    # pixel spacing = spacing_m · 2**spacing_e
     width, height, imag_down,
     max_iter, bailout2,
+    sa_n0=0, sa_e=0, sa_coef=np.zeros(6), sa_r=1.0,
 ):
     out = np.empty((height, width), dtype=np.float64)
     n_ref = ref_x.shape[0] - 1
@@ -118,6 +119,31 @@ def perturbation_kernel(
         f = scx = scy = 0.0
         n = 0
         it = 0
+        if sa_n0 > 0:
+            # Series approximation: δ at iteration n₀ is a cubic in u = δc / r
+            # (or δz₀ / r), shared by every pixel — skip straight to it.
+            ux = ox / sa_r
+            uy = oy / sa_r
+            u2x = ux * ux - uy * uy
+            u2y = 2.0 * ux * uy
+            u3x = u2x * ux - u2y * uy
+            u3y = u2x * uy + u2y * ux
+            ar, ai, br, bi, cr, ci = sa_coef[0], sa_coef[1], sa_coef[2], sa_coef[3], sa_coef[4], sa_coef[5]
+            wx = ar * ux - ai * uy + br * u2x - bi * u2y + cr * u3x - ci * u3y
+            wy = ar * uy + ai * ux + br * u2y + bi * u2x + cr * u3y + ci * u3x
+            s = sa_e
+            m = max(abs(wx), abs(wy))
+            if m != 0.0:
+                e = math.frexp(m)[1]
+                wx = math.ldexp(wx, -e)
+                wy = math.ldexp(wy, -e)
+                s += e
+            if s > SCALED_LIMIT:
+                wx = math.ldexp(wx, s)
+                wy = math.ldexp(wy, s)
+                scaled = False
+            n = sa_n0
+            it = sa_n0
         mu = -1.0
         while it < max_iter:
             if scaled:

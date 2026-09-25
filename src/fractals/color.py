@@ -21,6 +21,12 @@ PALETTES: dict[str, np.ndarray] = {
     "gray": np.array([(10, 10, 10), (245, 245, 245)], dtype=float),
 }
 
+# The cosine colormap of the original GLSL viewer (examples/original/gloo.py):
+# 0.5 + 0.5·cos(3 + 2π·(t, 1.5t, 2t)), sampled over its full period t ∈ [0, 2).
+_t = np.linspace(0.0, 2.0, 96, endpoint=False)[:, None]
+PALETTES["glsl"] = 255 * (0.5 + 0.5 * np.cos(3.0 + 2 * np.pi * _t * np.array([1.0, 1.5, 2.0])))
+del _t
+
 
 def palette_lookup(t: np.ndarray, palette: str | np.ndarray) -> np.ndarray:
     """Sample a cyclic palette at positions ``t`` (period 1). Returns floats."""
@@ -43,15 +49,18 @@ def colorize(
 ) -> np.ndarray:
     """RGB ``uint8`` image from smooth iteration counts (``-1`` = inside).
 
-    With ``period=None`` the palette is stretched over ``log(μ)`` — good for a
-    single image whatever its iteration range. With a number, one palette
+    With ``period=None`` the palette follows ``log(1 + μ − μ_min)``, the
+    iterations above the image's own minimum — good for a single image at any
+    depth (deep views have μ in the tens of thousands, all within a narrow
+    band, so plain ``log(μ)`` would be one flat colour). With a number, one palette
     cycle spans ``period`` iterations — stable from frame to frame, which is
     what a zoom animation wants.
     """
     escaped = mu >= 0
     m = np.where(escaped, mu, 0.0)
     if period is None:
-        t = 1.4 * np.log1p(np.maximum(m, 0.0)) + offset
+        base = m[escaped].min() if escaped.any() else 0.0
+        t = 1.4 * np.log1p(np.maximum(m - base, 0.0)) + offset
     else:
         t = m / period + offset
     rgb = palette_lookup(t, palette)

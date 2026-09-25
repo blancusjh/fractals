@@ -139,3 +139,19 @@ def test_beyond_float64_exponent_range():
         assert mu[j, i] == pytest.approx(exact, abs=1e-4)
     # And the image is not flat: structure survives at this depth.
     assert np.ptp(mu[mu >= 0]) > 1
+
+
+def test_series_approximation_skips_and_agrees():
+    """The series skips most iterations and changes nothing but chaotic pixels."""
+    from fractals.render import reference_orbit, series_start
+
+    re, im = fr.targets.landmark("spiral", digits=150)
+    view = fr.Viewport(re, im, "1e-100", 96, 96)
+    n = fr.auto_iterations(view)
+    sa = series_start(fr.Mandelbrot(), reference_orbit(fr.Mandelbrot(), view, n), view)
+    plain = fr.escape_time("mandelbrot", view, n, series=False)
+    fast = fr.escape_time("mandelbrot", view, n)
+    assert sa is not None and sa.n0 > 0.9 * np.median(plain)
+    assert (np.abs(plain - fast) > 1e-4).mean() < 0.005
+    # Julia has a series too; the non-holomorphic maps do not.
+    assert series_start(fr.Tricorn(), reference_orbit(fr.Tricorn(), view, 50), view) is None

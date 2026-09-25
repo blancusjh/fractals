@@ -12,10 +12,12 @@ C                print the current coordinates (paste them back with --re/--im/-
 R                back to the fractal's home view
 Esc              quit
 
-The window shows the last finished render; while you zoom or drag, that image
-is scaled and moved as a preview, and a new render starts once you pause.
-Every render is exact at any depth: coordinates are ``Decimal`` and the pixels
-come from perturbation around an arbitrary-precision reference orbit.
+The window never blocks: while you zoom or drag, the last image is scaled and
+moved as a preview; once you pause, a coarse pass and then a full-resolution
+pass are rendered — in a background thread on the CPU, or between frames on
+the window's OpenGL context with ``gpu=True``. Every render is exact at any
+depth: coordinates are ``Decimal`` and the pixels come from perturbation
+around an arbitrary-precision reference orbit.
 
 The navigation logic lives in :class:`Navigator`, which has no GUI dependency.
 """
@@ -31,6 +33,7 @@ import numpy as np
 from .color import PALETTES
 from .families import CATALOG, Fractal, get
 from .precision import decimal_context
+from .color import colorize
 from .render import auto_iterations, render
 from .view import Viewport
 
@@ -84,10 +87,17 @@ class Navigator:
     def max_iter(self) -> int:
         return max(16, int(auto_iterations(self.view) * self.iter_scale))
 
-    def render(self) -> np.ndarray:
-        img = render(self.fractal, self.view, self.max_iter, self.palette)
-        self.shown = self.view
-        return img
+    def render(self, view: Viewport | None = None, escape=None) -> np.ndarray:
+        """Render ``view`` (default: the current one). Does not touch ``shown``.
+
+        ``escape`` replaces :func:`~fractals.render.escape_time` (e.g. a GPU
+        renderer's method).
+        """
+        view = self.view if view is None else view
+        n = max(16, int(auto_iterations(view) * self.iter_scale))
+        if escape is None:
+            return render(self.fractal, view, n, self.palette)
+        return colorize(escape(self.fractal, view, n), self.palette)
 
     def preview_transform(self) -> tuple[float, float, float]:
         """``(scale, dx, dy)`` placing the shown image in the current view.
@@ -134,8 +144,17 @@ void main() {
 
 
 def build(fractal="mandelbrot", re=None, im=None, radius=None, size=(800, 800),
-          palette="fire", idle_delay=0.15):
-    """Create the viewer window; returns ``(canvas, navigator)`` without blocking."""
+          palette="fire", idle_delay=0.12, gpu=False, coarse=4):
+    """Create the viewer window; returns ``(canvas, navigator)`` without blocking.
+
+    Rendering never blocks the window: on the CPU it runs in a background
+    thread (the Numba kernel releases the GIL); on the GPU (``gpu=True``) it
+    runs between frames on the window's own OpenGL context. Each view is
+    drawn twice — first ``coarse`` times smaller, then at full resolution —
+    and a newer view supersedes any render still pending.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
     from vispy import app, gloo
 
     canvas = app.Canvas(keys="interactive", size=size, title="fractals")
@@ -151,33 +170,81 @@ def build(fractal="mandelbrot", re=None, im=None, radius=None, size=(800, 800),
     program["a_texcoord"] = np.array([[0, 1], [1, 1], [0, 0], [1, 0]], np.float32)
     texture = gloo.Texture2D(np.zeros((1, 1, 3), np.uint8), interpolation="linear")
     program["u_texture"] = texture
-    state = {"drag": None, "dirty": True}
+    state = {"drag": None, "generation": 0, "jobs": [], "t0": 0.0}
     keys = {str(i + 1): name for i, name in enumerate(CATALOG)}
+    escape = None
+    if gpu:
+        from .gpu import GpuRenderer
+        escape = GpuRenderer(canvas).escape_time
+    pool = None if gpu else ThreadPoolExecutor(max_workers=1)
 
     def to_pixels(pos):
         ratio = np.asarray(canvas.physical_size, float) / np.asarray(canvas.size, float)
         return float(pos[0] * ratio[0]), float(pos[1] * ratio[1])
 
-    def rerender():
-        t = time.perf_counter()
-        img = nav.render()
+    def passes(view):
+        """The views to render for ``view``: coarse first, then full."""
+        out = []
+        if coarse > 1 and view.width >= 4 * coarse:
+            out.append(view.resized(max(1, view.width // coarse), max(1, view.height // coarse)))
+        out.append(view)
+        return out
+
+    def show(img, view, final):
         texture.set_data(img)
-        state["dirty"] = False
-        dt = time.perf_counter() - t
-        canvas.title = (f"fractals — {nav.fractal.name}  zoom {nav.view.magnification}  "
-                        f"{nav.view.bits} bits  {nav.max_iter} it  {dt:.2f} s")
+        nav.shown = view.resized(nav.view.width, nav.view.height)
+        if final:
+            dt = time.perf_counter() - state["t0"]
+            canvas.title = (f"fractals — {nav.fractal.name}  zoom {view.magnification}  "
+                            f"{view.bits} bits  {nav.max_iter} it  {dt:.2f} s")
         canvas.update()
+
+    def start_render(event=None):
+        state["generation"] += 1
+        gen = state["generation"]
+        for _, _, fut in state["jobs"]:
+            if fut is not None:
+                fut.cancel()
+        state["t0"] = time.perf_counter()
+        views = passes(nav.view)
+        if pool is None:
+            state["jobs"] = [(gen, v, None) for v in views]
+        else:
+            fn = nav.render   # bound now: the palette/fractal of this request
+            state["jobs"] = [(gen, v, pool.submit(fn, v)) for v in views]
+        canvas.title = f"fractals — rendering {nav.fractal.name} …"
+
+    def poll(event):
+        jobs = state["jobs"]
+        while jobs:
+            gen, view, fut = jobs[0]
+            if gen != state["generation"]:
+                jobs.pop(0)
+                continue
+            if fut is None:                       # GPU: one pass per tick
+                img = nav.render(view, escape)
+            elif fut.done():
+                if fut.cancelled():
+                    jobs.pop(0)
+                    continue
+                img = fut.result()
+            else:
+                return
+            jobs.pop(0)
+            show(img, view, final=not jobs)
+            return
+
+    debounce = app.Timer(idle_delay, connect=start_render, iterations=1, start=False)
+    poller = app.Timer(0.02, connect=poll, start=True)
 
     def changed():
-        state["dirty"] = True
-        timer.stop()
-        timer.start()
+        debounce.stop()
+        debounce.start()
         canvas.update()
-
-    timer = app.Timer(idle_delay, connect=lambda ev: rerender(), iterations=1, start=False)
 
     @canvas.connect
     def on_draw(event):
+        gloo.set_viewport(0, 0, *canvas.physical_size)
         gloo.clear("black")
         scale, dx, dy = nav.preview_transform()
         w, h = nav.view.width, nav.view.height
@@ -232,15 +299,16 @@ def build(fractal="mandelbrot", re=None, im=None, radius=None, size=(800, 800),
         elif k == "s":
             from PIL import Image
             name = f"{nav.fractal.name}_{int(time.time())}.png"
-            Image.fromarray(nav.render()).save(name)
+            Image.fromarray(nav.render(escape=escape)).save(name)
             print(f"saved {name}", flush=True)
             return
         else:
             return
         changed()
 
+    canvas._fractal_timers = (debounce, poller)   # keep the timers alive
     canvas.show()
-    rerender()
+    start_render()
     return canvas, nav
 
 

@@ -1,6 +1,6 @@
-"""Baseline: vectorised NumPy Mandelbrot in float64 (static image).
+"""Original: vectorised NumPy Mandelbrot in float64 (static image).
 
-Kept for comparison with the `fractals` package: plain float64 runs out of
+Kept as written, for comparison with the `fractals` package: plain float64 runs out of
 precision at a magnification of ~1e14, where pixels merge into blocks.
 """
 

@@ -15,6 +15,7 @@ Both are solved in fixed-point integers at the requested precision.
 
 from __future__ import annotations
 
+import math
 from decimal import Decimal, localcontext
 
 from .precision import decimal_context, fixed_to_float, to_decimal, to_fixed
@@ -90,6 +91,66 @@ def nucleus(seed_re, seed_im, period: int, digits: int = 100,
         return _orbit_with_derivative(cx, cy, period, bits)[-1]
 
     return _newton(seed_re, seed_im, residual, digits, max_steps)
+
+
+def ball_period(re, im, radius, max_period: int = 100000) -> int | None:
+    """Period of the lowest-period nucleus near ``c`` (the ball method).
+
+    Iterates ``z`` and ``dz/dc`` at ``c``; the first ``n`` at which the disc of
+    ``radius`` around ``c`` is mapped over 0 (``|zₙ| < |dzₙ/dc|·radius``) is
+    the period of a hyperbolic component — a minibrot or a bulb — close by.
+    """
+    radius = to_decimal(radius)
+    bits = max(64, int(-radius.adjusted() * 3.33) + 64)
+    cx, cy = to_fixed(to_decimal(re), bits), to_fixed(to_decimal(im), bits)
+    rr = to_fixed(radius, bits)
+    one = 1 << bits
+    x = y = dx = dy = 0
+    for n in range(1, max_period + 1):
+        tx, ty = _cmul(x, y, dx, dy, bits)
+        dx, dy = 2 * tx + one, 2 * ty
+        x, y = ((x * x - y * y) >> bits) + cx, ((x * y) >> (bits - 1)) + cy
+        z2 = x * x + y * y
+        if z2 > (4 * one * one) << 16:
+            return None                              # escaped: nothing nearby
+        if z2 << (2 * bits) < (dx * dx + dy * dy) * rr * rr:
+            return n
+    return None
+
+
+def minibrot_size(re, im, period: int, digits: int = 40) -> complex:
+    """Complex size of the minibrot with nucleus ``c``: near it the set is
+    approximately ``c + size·M`` — ``|size|`` its scale, ``arg(size)`` its
+    rotation (the atom-domain formula)."""
+    bits = int(digits * 3.33) + 64
+    cx, cy = to_fixed(to_decimal(re), bits), to_fixed(to_decimal(im), bits)
+    x = y = 0
+    lam = 1 + 0j
+    b = 1 + 0j
+    for _ in range(1, period):
+        x, y = ((x * x - y * y) >> bits) + cx, ((x * y) >> (bits - 1)) + cy
+        lam *= 2 * complex(fixed_to_float(x, bits), fixed_to_float(y, bits))
+        b += 1 / lam
+    return 1 / (b * lam * lam)
+
+
+def minibrot_near(re, im, radius, digits: int | None = None,
+                  max_period: int = 100000) -> tuple[Decimal, Decimal, int, complex] | None:
+    """The minibrot found by :func:`ball_period` near ``c``, exactly.
+
+    Returns ``(re, im, period, size)`` — the nucleus to ``digits`` digits
+    (default: enough for zooming to ~1e-6 of its size) — or ``None``.
+    """
+    p = ball_period(re, im, radius, max_period)
+    if p is None:
+        return None
+    guess = int(-to_decimal(radius).adjusted()) + 20
+    nre, nim = nucleus(re, im, p, digits=digits or 2 * guess)
+    size = minibrot_size(nre, nim, p)
+    if digits is None:
+        digits = int(-math.log10(abs(size))) + 30
+        nre, nim = nucleus(nre, nim, p, digits=digits)
+    return nre, nim, p, size
 
 
 def preperiod_period(re, im, max_preperiod: int = 200, max_period: int = 64,

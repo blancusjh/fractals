@@ -58,6 +58,7 @@ def zoom_frames(
     palette: str = "fire",
     period: float = 48.0,
     progress=None,
+    device: str = "cpu",
 ) -> Iterator[np.ndarray]:
     """RGB frames along ``path``.
 
@@ -72,7 +73,7 @@ def zoom_frames(
             n = int(max_iter(view))
         else:
             n = int(max_iter)
-        mu = escape_time(path.fractal, view, n)
+        mu = escape_time(path.fractal, view, n, device=device)
         if progress is not None:
             progress(k, view, mu)
         yield colorize(mu, palette, period=period)

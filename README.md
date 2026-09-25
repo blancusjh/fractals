@@ -5,14 +5,17 @@ reference orbit are computed in arbitrary precision; every pixel is then
 iterated in float64 as a *perturbation* of that orbit, which is exact enough
 at 1e30, 1e300 or 1e600 as it is at 1.
 
-![Zooming into a Misiurewicz point of the Mandelbrot set, from the whole set to a magnification of 1e27; the label shows the zoom and the binary precision in use.](docs/deep_zoom.gif)
+![An endless zoom into the Mandelbrot set: down Seahorse Valley past spirals and embedded Julia sets to a minibrot at 10^15×, which becomes the whole set again and the zoom starts over.](docs/infinite_zoom.gif)
 
-*From the whole set to 10²⁷× magnification (13 orders of magnitude past the
-point where float64 dissolves into blocks) without a glitch. The target is a
-Misiurewicz point computed by Newton's method to as many digits as the zoom
-needs, so it sits exactly on the boundary and new structure keeps appearing at
-every scale. The label shows the working precision growing from 70 to 160
-bits. Rendered by [`examples/deep_zoom_gif.py`](examples/deep_zoom_gif.py).*
+*An endless zoom. The dive runs down Seahorse Valley, past spirals, double
+spirals, a period-78 minibrot and the 998-fold embedded Julia sets, to a
+**period-998 minibrot** at 10¹⁵×. That minibrot is an exact copy of the whole set,
+so the last frame *is* the first one and the GIF loops without a seam. Nothing
+is hand-tuned: the minibrot's nucleus is found by the ball method and Newton's
+method, and its complex size gives the copy's scale and rotation, which the
+camera undoes on the way down. Rendered by
+[`examples/deep_zoom_gif.py`](examples/deep_zoom_gif.py) in ~3 minutes on 4
+CPU cores.*
 
 ---
 
@@ -25,6 +28,7 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[viewer,gif]"      # or: pip install -r requirements.txt && pip install -e .
 
 python -m fractals view                        # interactive deep-zoom window
+python -m fractals view --gpu                  # the same, rendered by the GPU
 ```
 
 Viewer controls:
@@ -41,9 +45,12 @@ Viewer controls:
 | `R` | back to the home view |
 | `Esc` | quit |
 
-While you zoom or drag, the last image is scaled and moved as a preview, and it
-is re-rendered exactly once you pause. The first render includes Numba's
-compilation time (cached after that).
+The window never freezes. While you zoom or drag, the last image is scaled and
+moved as a preview; once you pause, a quarter-resolution pass appears almost
+immediately, followed by the full-resolution one. CPU renders run in a
+background thread (the Numba kernel releases the GIL); GPU renders run between
+frames on the window's own OpenGL context. The first CPU render includes
+Numba's compilation time (cached after that).
 
 ### From the command line
 
@@ -55,6 +62,9 @@ python -m fractals render mandelbrot --radius 1e-60 --supersample 2 -o deep.png 
 
 # A zoom GIF onto an exact landmark (computed to the digits the depth needs)
 python -m fractals zoom --target spiral --depth 1e100 --frames 300 -o zoom.gif
+
+# Any command takes --gpu to render with the GLSL kernel instead of the CPU
+python -m fractals render tricorn --gpu --supersample 2 -o tricorn.png
 
 # The other families
 python -m fractals render burning_ship --re -1.7621 --im -0.029 --radius 0.05 -o ship.png
@@ -70,6 +80,7 @@ re, im = fr.targets.landmark("spiral", digits=120)       # exact, 120 digits
 view = fr.Viewport(re, im, radius="1e-100", width=800, height=600)
 
 img = fr.render("mandelbrot", view, supersample=2)        # (600, 800, 3) uint8
+img = fr.render("mandelbrot", view, device="gpu")         # same, on the GPU
 mu  = fr.escape_time("mandelbrot", view, max_iter=20000)  # smooth iteration counts
 
 view = view.zoom("1e50", about=(200, 150))                # keep pixel (200,150) fixed
@@ -122,6 +133,20 @@ The library avoids the problem instead of carrying more digits per pixel:
 5. **Past float64's exponent range.** Beyond ~1e300 a pixel offset underflows
    float64 itself, so while `δ` is that small it is carried as a mantissa plus
    an integer exponent and renormalised as it grows.
+6. **Skipping the shared iterations.** At depth, every pixel spends thousands
+   of iterations doing nearly the same thing. *Series approximation* expands
+   `δₙ` as a cubic in the pixel offset, with coefficients that depend only on
+   the reference, and jumps every pixel straight to the last iteration where
+   the cubic is still exact to 2⁻⁴² (checked with the 4th-order term). At
+   10³²⁰× that skips 18,962 of ~19,200 iterations: a 240×240 frame takes
+   0.15 s instead of 6.3 s. (Mandelbrot and Julia; the Tricorn and Burning Ship
+   are not holomorphic and have no such series.)
+7. **Or on the GPU.** [`gpu.py`](src/fractals/gpu.py) is the same algorithm
+   (reference texture, perturbation, rebasing, extended range, series start)
+   as a GLSL fragment shader, through VisPy on any OpenGL 2.1 GPU. It computes
+   in float32, so escape counts can differ slightly from the float64 CPU
+   kernel; the images are visually identical, and the tests check them against
+   each other.
 
 The tests check steps 2–5 against **direct iteration in exact big-integer
 arithmetic**, pixel by pixel, for all four fractals at 10²⁰× and 10⁶⁰×, and
@@ -142,12 +167,17 @@ A deep zoom is only as good as its target: a centre that is off the boundary by
 closed definition, by Newton's method in fixed point, to any number of digits:
 
 ```python
-from fractals.targets import misiurewicz, nucleus, preperiod_period, landmark
+from fractals.targets import misiurewicz, nucleus, preperiod_period, landmark, minibrot_near
 
 re, im = misiurewicz("-0.77568377", "0.13646737", preperiod=24, period=1, digits=500)
 preperiod_period(re, im)                  # (24, 1)
 re, im = nucleus("-1.75", "0", period=3)  # centre of the period-3 minibrot
 re, im = landmark("spiral", digits=1000)  # named places: spiral, antenna, dendrite
+
+# The minibrot nearest a point: nucleus (exact), period, and complex size
+re, im, period, size = minibrot_near("-0.743643887037158704752191506114774",
+                                     "0.131825904205311970493132056385139", "1e-10")
+# → period 998, |size| 6.3e-16: near it the set is  c + size·M  (scale and rotation)
 ```
 
 ---
@@ -161,12 +191,13 @@ The package is ordered by what each thing *is*, from numbers up to pixels:
 | [`precision.py`](src/fractals/precision.py) | arbitrary-precision numbers and the bridge to float64 | `to_decimal`, `to_fixed`, `fixed_to_float`, `FloatExp` |
 | [`families.py`](src/fractals/families.py) | the catalogue: what each fractal iterates | `Mandelbrot`, `Julia`, `Tricorn`, `BurningShip`, `CATALOG`, `get` |
 | [`view.py`](src/fractals/view.py) | the camera: a window onto the plane, at any depth | `Viewport` (`.zoom`, `.pan`, `.point`, `.bits`) |
-| [`kernel.py`](src/fractals/kernel.py) | perturbation iteration (Numba, parallel) | `perturbation_kernel` |
-| [`render.py`](src/fractals/render.py) | fractal + view → escape data → image | `reference_orbit`, `escape_time`, `render`, `auto_iterations` |
+| [`kernel.py`](src/fractals/kernel.py) | perturbation iteration (Numba, parallel, GIL-free) | `perturbation_kernel` |
+| [`gpu.py`](src/fractals/gpu.py) | the same kernel as a GLSL shader | `GpuRenderer` |
+| [`render.py`](src/fractals/render.py) | fractal + view → escape data → image | `reference_orbit`, `series_start`, `escape_time`, `render` |
 | [`color.py`](src/fractals/color.py) | escape data → RGB | `colorize`, `PALETTES` |
-| [`targets.py`](src/fractals/targets.py) | exact zoom targets | `misiurewicz`, `nucleus`, `landmark` |
+| [`targets.py`](src/fractals/targets.py) | exact zoom targets | `misiurewicz`, `nucleus`, `minibrot_near`, `landmark` |
 | [`zoom.py`](src/fractals/zoom.py) | zoom paths, frame sequences, GIFs | `ZoomPath`, `zoom_frames`, `save_gif` |
-| [`viewer.py`](src/fractals/viewer.py) | interactive window (VisPy); logic in a GUI-free `Navigator` | `run`, `Navigator` |
+| [`viewer.py`](src/fractals/viewer.py) | interactive window (VisPy), non-blocking; logic in a GUI-free `Navigator` | `run`, `build`, `Navigator` |
 | [`__main__.py`](src/fractals/__main__.py) | the command line | `view`, `render`, `zoom` |
 
 To add a fractal, subclass `Fractal` in `families.py` with its exact map
@@ -178,55 +209,65 @@ drawing.
 .
 ├── src/fractals/             the library (above)
 ├── examples/
-│   ├── deep_zoom_gif.py      the GIF at the top of this page
+│   ├── deep_zoom_gif.py      the endless zoom at the top of this page
 │   ├── gallery.py            gallery.png, depths.png, precision.png
-│   └── float_baselines/      the original fixed-precision renderers, for comparison
-│       ├── gpu_glsl_float32.py
-│       ├── cpu_numba_float64.py
-│       └── cpu_numpy_float64.py
-├── tests/                    perturbation vs exact big-int iteration, views, targets
+│   └── original/             the original renderers, kept as they were
+│       ├── gloo.py           GLSL viewer (float32), unchanged
+│       ├── numba_mandelbrot.py
+│       └── numpy_mandelbrot.py
+├── tests/                    perturbation vs exact big-int iteration, GPU vs CPU, views, targets
 ├── docs/                     figures
 ├── pyproject.toml
 └── requirements.txt
 ```
 
-## Float baselines
+## The original renderers
 
-The original three renderers are kept in
-[`examples/float_baselines/`](examples/float_baselines) to compare approaches
-side by side. They are fast and simple, and they stop at the precision of their
-number type:
+The three original renderers live, unchanged in substance, in
+[`examples/original/`](examples/original). The GLSL viewer is byte-for-byte the
+original: the fastest way to fly around the set interactively, until float32
+runs out at about 10⁶×. Its cosine colormap is also available to the library
+as the `glsl` palette (`palette="glsl"`, or `P` in the viewer).
 
 ```bash
-python examples/float_baselines/gpu_glsl_float32.py   # GLSL, float32 — breaks near 1e6×
-python examples/float_baselines/cpu_numba_float64.py  # Numba, float64 — breaks near 1e14×
-python examples/float_baselines/cpu_numpy_float64.py  # NumPy, float64, static image
+python examples/original/gloo.py              # GLSL, float32: instant, until ~1e6×
+python examples/original/numba_mandelbrot.py  # Numba, float64: until ~1e14×
+python examples/original/numpy_mandelbrot.py  # NumPy, float64, static image
 ```
+
+(They were renamed from `mandelbrot/numpy.py` and `mandelbrot/numba.py`: run as
+scripts, those names shadowed the `numpy` and `numba` packages they import.)
 
 ## Tests
 
 ```bash
 pip install -e ".[dev]"
-python -m pytest            # 27 tests, a few seconds after the first JIT compile
+python -m pytest            # 28 tests (+6 GPU tests, skipped without an OpenGL context)
+xvfb-run python -m pytest   # headless machines: GPU tests on Mesa's software OpenGL
 ```
 
 The render tests compare the perturbation kernel with independent direct
 iteration: float64 for shallow views, and exact fixed-point integers pixel by
-pixel for deep ones (10²⁰×, 10⁶⁰× and 10⁴⁰⁰×). Pixels whose orbit is
+pixel for deep ones (10²⁰×, 10⁶⁰× and 10⁴⁰⁰×). The series approximation and
+the GPU kernel are each checked against the plain CPU kernel. Pixels whose orbit is
 chaotic (the answer changes if the pixel moves by 10⁻⁹ of its width) are
 excluded, since no finite precision agrees there.
 
 ## Limitations
 
-- **Iterations grow with depth.** Near the boundary, escape takes more
-  iterations the deeper you go, roughly linearly in the number of decades
-  (`auto_iterations` budgets 120 per decade). Series approximation and
-  bilinear approximation, which skip most of those iterations, are not
-  implemented yet. A 240×240 frame at 10³²⁰× takes ~6 s on 4 cores.
-- **CPU only.** The perturbation kernel runs in Numba across CPU cores; the GPU
-  path is the float32 baseline.
+- **Minibrots of very high period are expensive.** Near a period-p minibrot one
+  step of the set's own dynamics costs p iterations, and interior pixels run to
+  the iteration limit. The endless zoom stops at a period-998 minibrot for
+  that reason; the period-8007 one further down the same path needs ~1.6 M
+  iterations per pixel to render crisply. Periodicity checking would help with
+  interior pixels, but it needs derivative tracking to be reliable at depth,
+  where exterior orbits shadow cycles for thousands of iterations.
+- **Series approximation covers `z² + c` only** (Mandelbrot, Julia). The Tricorn
+  and Burning Ship still iterate every step (bilinear approximation would
+  cover them).
+- **The GPU kernel is float32.** It keeps the zoom depth unlimited, but a
+  pixel's escape count may differ from the float64 CPU result by a fraction of
+  an iteration, more on chaotic filaments.
 - **Chaotic regions.** Where orbits are chaotic (parts of the Burning Ship,
   the Mandelbrot antenna), individual pixels are not reproducible by *any*
   finite precision. The picture is right statistically, not pixel by pixel.
-- **The viewer renders synchronously.** A very deep, high-iteration view
-  blocks the window for the length of one render.

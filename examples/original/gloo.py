@@ -1,8 +1,4 @@
-"""Baseline: interactive GPU Mandelbrot viewer (VisPy Gloo, GLSL float32).
-
-The fastest renderer here, and the shallowest: single-precision coordinates
-break down at a magnification of ~1e6. For deep zoom use `python -m fractals view`.
-"""
+"""Interactive GPU Mandelbrot viewer built with VisPy Gloo."""
 
 import numpy as np
 from vispy import app, gloo
