@@ -1,6 +1,5 @@
 # Fractals
 
-A garden of escape-time fractals, open to any depth.
 
 ![An endless zoom into the Mandelbrot set, down Seahorse Valley to a tiny copy of the whole set, where it starts again.](docs/infinite_zoom.gif)
 
